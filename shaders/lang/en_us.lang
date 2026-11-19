@@ -1,0 +1,59 @@
+# Starling Visuals 2: the names the Shader Options page shows.
+
+option.SUN_STRENGTH=Sun strength
+option.SKY_BRIGHTNESS=Sky brightness
+option.SKY_SATURATION=Sky colour
+option.BLOCKLIGHT_STRENGTH=Torch light
+option.EXPOSURE=Exposure
+option.SATURATION=Saturation
+option.CONTRAST=Contrast
+option.WARMTH=Warmth
+option.FOG_DENSITY=Air thickness
+option.FOG_HEIGHT=Air height
+option.shadowMapResolution=Shadow detail
+option.shadowDistance=Shadow distance
+option.SHADOW_SOFTNESS=Shadow softness
+option.GODRAYS=Sun rays
+option.GODRAYS_STRENGTH=Sun ray strength
+option.GODRAYS_SAMPLES=Sun ray samples
+option.BLOOM=Glow
+option.BLOOM_STRENGTH=Glow strength
+option.BLOOM_THRESHOLD=Glow threshold
+option.SSAO=Contact shadows
+option.SSAO_STRENGTH=Contact shadow strength
+option.SSAO_SAMPLES=Contact shadow samples
+option.SPECULAR=Surface highlights
+option.WATER_WAVES=Water waves
+option.WAVING_PLANTS=Wind
+option.EMISSIVE_BLOCKS=Glowing blocks
+option.HAND_LIGHT=Hand light
+option.UNDERWATER_CAUSTICS=Underwater light
+option.STARS=Stars
+option.AURORA=Aurora
+option.AURORA_STRENGTH=Aurora strength
+option.TONEMAP=Tone curve
+option.COLOR_GRADE=Colour grade
+option.SHARPEN=Sharpen
+option.SHARPEN_STRENGTH=Sharpen strength
+option.VIGNETTE=Vignette
+option.VIGNETTE_STRENGTH=Vignette strength
+option.FILM_GRAIN=Film grain
+option.GRAIN_STRENGTH=Grain strength
+
+value.TONEMAP.0=ACES
+value.TONEMAP.1=Soft
+value.TONEMAP.2=Reinhard
+value.shadowMapResolution.512=512
+value.shadowMapResolution.1024=1024
+value.shadowMapResolution.2048=2048
+value.shadowMapResolution.4096=4096
+
+profile.LOW=Low
+profile.HIGH=High
+profile.ULTRA=Ultra
+
+screen.Lighting=Lighting
+screen.Air=Air
+screen.Surfaces=Surfaces
+screen.Sky=Sky
+screen.Lens=Lens
