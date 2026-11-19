@@ -60,8 +60,8 @@ HORIZON_REPO=../minecraft bash check.sh
 ```
 
 `check.sh` builds Starling's `pack_report` example and runs every program of the pack through
-the real reader and both backends, then repeats with every switch on and off and every value at
-its highest and lowest. A pass is:
+the real reader, writes every module with the SPIR-V writer wgpu uses on Vulkan, then repeats
+with every switch on and off and every value at its highest and lowest. A pass is:
 
 ```text
 == dist/StarlingVisuals.zip: 13 translate, 0 fail, 1 unused
