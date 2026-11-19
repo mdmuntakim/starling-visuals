@@ -19,12 +19,12 @@ jobs:
           from pathlib import Path
           archive = zipfile.ZipFile("dist/StarlingVisuals.zip")
           names = set(archive.namelist())
-          for required in ["shaders.properties", "noise.png", "program/final.glsl"]:
+          for required in ["shaders/shaders.properties", "shaders/noise.png", "shaders/program/final.glsl"]:
               assert required in names, required
-          props = archive.read("shaders.properties").decode()
+          props = archive.read("shaders/shaders.properties").decode()
           for profile in ("profile.LOW =", "profile.HIGH =", "profile.ULTRA ="):
               assert profile in props, profile
-          assert len(archive.read("noise.png")) > 100_000
+          assert len(archive.read("shaders/noise.png")) > 100_000
           print(f"{len(names)} files, {Path('dist/StarlingVisuals.zip').stat().st_size} bytes")
           PY
       - name: Read the pack with Starling's translator
