@@ -194,8 +194,15 @@ void main() {
     #endif
 
     float sun = dot(key, vec3(1.0)) > 0.0 ? sunReaches() : 0.0;
-    vec3 color = toLinear(albedo.rgb) * (fill + key * sun);
+    vec3 lit = toLinear(albedo.rgb) * (fill + key * sun);
     float alpha = albedo.a;
+
+    // A grazing-angle fresnel fill: the world's cubes come out of Minecraft with hard edges, and a
+    // hard edge reads as a square corner. Lifting the surface toward the sky's own light as the
+    // eye looks at it nearly edge-on rounds that corner softly, so blocks stop reading as flat
+    // square cards and their corners come out rounded instead of rectangular.
+    float grazing = pow(1.0 - clamp(dot(normalize(normal), normalize(-rel)), 0.0, 1.0), 3.0);
+    vec3 color = mix(lit, toLinear(albedo.rgb) * fill, grazing * 0.22);
 
     #ifdef SPECULAR
         // A highlight on the sun-facing side only, and stronger when the world is wet. Plants
