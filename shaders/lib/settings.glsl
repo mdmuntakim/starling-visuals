@@ -1,4 +1,4 @@
-// Starling Visuals 3.0: every option the pack exposes. The defaults are the HIGH profile, the
+// Starling Visuals 3.1: every option the pack exposes. The defaults are the HIGH profile, the
 // one the game's Auto picks on a strong phone; profile.LOW in shaders.properties removes the
 // expensive parts for a weaker device. Values are deliberately conservative on a phone: the
 // pack spends its pixels on the world and the sky, not on deep sample counts.
@@ -6,6 +6,10 @@
 // 2.1's rule: a block is never allowed to become a flat sheet of white. The sun's highlight is
 // Fresnel-weighted and divided by pi, the glowing blocks emit from their own texture instead of
 // a large constant, and the film curve has a real black point.
+//
+// 3.1's rule: an emissive id never overrides the texture. Emission is gated on the texel's own
+// brightness, so a block whose sprite is shared with a light source (obsidian under a beacon,
+// pumpkin beside a jack o'lantern) keeps its own colour instead of glowing pale.
 
 // Sun and sky.
 #define SUN_STRENGTH 2.6 // [1.5 2.0 2.6 3.0 3.4 3.8]

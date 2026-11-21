@@ -58,6 +58,34 @@ def main() -> int:
     if not (SHADERS / "program" / "basic.glsl").is_file():
         problems.append("program/basic.glsl is missing: the block outline has no program")
 
+    # An emissive id on a sprite that a plain block also draws makes that block glow. Horizon
+    # hands the pack an id per sprite layer, and the beacon's base is the obsidian sprite while
+    # the jack o'lantern's side and top are the pumpkin sprites: those two ids turned ordinary
+    # obsidian and pumpkin into pale, almost white blocks. Keep them out of the emissive groups,
+    # and keep obsidian and pumpkin at material 0.
+    assigned: dict[str, int] = {}
+    for line in (SHADERS / "block.properties").read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].replace("\\", " ").strip()
+        if not line.startswith("block."):
+            continue
+        key, _, value = line.partition("=")
+        try:
+            block_id = int(key.strip()[len("block.") :])
+        except ValueError:
+            continue
+        for name in value.split():
+            assigned.setdefault(name, block_id)
+    emissive_ids = {10004, 10005, 10006}
+    for name in ("minecraft:beacon", "minecraft:jack_o_lantern"):
+        if assigned.get(name) in emissive_ids:
+            problems.append(
+                f"block.properties: {name} has emissive id {assigned[name]}; "
+                "its sprite is shared with a plain block"
+            )
+    for name in ("minecraft:obsidian", "minecraft:pumpkin"):
+        if name in assigned:
+            problems.append(f"block.properties: {name} must stay material 0, not {assigned[name]}")
+
     if problems:
         for problem in problems:
             print(f"error: {problem}", file=sys.stderr)

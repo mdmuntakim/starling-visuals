@@ -1,12 +1,32 @@
-# Starling Visuals 3.0
+# Starling Visuals 3.1
 
 Starling Visuals is Starling's own shader pack for Minecraft on a phone, written in the Iris /
-OptiFine `shaders/` format. Version 3.0 is the ultimate pass: extreme optimisation, a black
-block outline, no block ever turns into a flat sheet of white, and a cinematic lens, sky, water
-and lighting stack that pushes a one-metre-cube world as far as a phone can take it.
+OptiFine `shaders/` format. Version 3.1 finishes the job 3.0 started: no ordinary block is left
+pale or white, the edge pass costs half the fetches, and a `POTATO` profile gives a weak phone
+the most frames it can make. The cinematic lens, sky, water and lighting stack stay.
 
 The pack ships inside the Starling APK as `assets/StarlingVisuals.zip`; this repository is the
 standalone source and the release download.
+
+## What is new in 3.1
+
+- **Obsidian and pumpkin are their own colours again.** The white was not the film curve this
+  time: it was the emissive id. Some clients (Horizon, Starling's own) give a shader an id per
+  *sprite layer*, not per block, and two glowing blocks reuse a plain block's sprite — the
+  beacon's base is `block/obsidian`, and the jack o'lantern's side and top are
+  `block/pumpkin_side` and `block/pumpkin_top`. Those sprites carried the cold-light id, so
+  every obsidian block and every pumpkin emitted light and washed out. Neither block carries
+  an emissive id any more, and `lit.glsl` now gates emission on the texture's own brightness:
+  a dark texel emits nothing, so a black block can never be lifted to grey by an id again.
+- **Half the edge-pass fetches.** The edge-aware smooth and the unsharp mask both read the same
+  four neighbours; they are one pass now, four fetches instead of eight on `HIGH` and `ULTRA`,
+  with the same picture.
+- **The sun is looked up once per pixel.** The highlight, the light through a leaf and the
+  water's path all reused `sunDir()`, `sunlight()` and `moonlight()`; they now share one lookup.
+- **`POTATO`.** A fourth profile below `LOW` for the frame rate: no post at all, no emission,
+  no waves or wind, a 512 shadow map and 32 blocks of shadow. `Auto` ranks it lightest and
+  picks it when even `LOW` is too much.
+- **The block outline stays black** and every include still resolves.
 
 ## What is new in 2.1
 
@@ -47,6 +67,7 @@ standalone source and the release download.
 
 | Profile | What it is for | What it turns off or down |
 | --- | --- | --- |
+| `POTATO` | the most frames a phone can make | everything `LOW` turns off, plus emission, water waves, wind, the held light and the grade; 512 shadow map, 32 block shadows, 1 shadow tap |
 | `LOW` | a weak phone, or a long battery | contact shadows, rays, glow, highlights, stars, aurora, edge smooth, sharpen, vignette, grain; 512 shadow map, 32 block shadows, 1 shadow tap, 4 SSAO taps, 6 ray samples |
 | `HIGH` | the default and what Auto picks on a strong phone | nothing; 1024 shadow map, 64 block shadows, 2 shadow taps, 6 SSAO taps, 8 ray samples |
 | `ULTRA` | a tablet or a PC | 2048 shadow map, 96 block shadows, 4 shadow taps, 10 SSAO taps, 12 ray samples, wider softness |

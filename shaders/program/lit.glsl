@@ -238,6 +238,12 @@ void main() {
     vec3 lit = albedoLinear * (fill + key * sun);
     float alpha = albedo.a;
 
+    // The sun's and moon's colours once per pixel: the highlight, the light through a leaf and
+    // the water all used to normalize the light direction and run the atmosphere again.
+    vec3 s = sunDir();
+    vec3 sunColor = sunlight(s);
+    vec3 moonColor = moonlight(s);
+
     // A grazing-angle fill: the world's cubes come out of Minecraft with hard edges, and a hard
     // edge reads as a square corner. Lifting the surface toward the sky's own light as the eye
     // looks at it nearly edge-on rounds that corner softly. It is computed per vertex above.
@@ -249,34 +255,46 @@ void main() {
     #ifdef SPECULAR
         // The sun's or moon's image on the surface. `spec` is the vertex's Fresnel-weighted
         // lobe; the shadow lookup and the light's colour are the only per-pixel parts.
-        color += (sunlight(sunDir()) + moonlight(sunDir()) * 2.0) * spec * sun;
+        color += (sunColor + moonColor * 2.0) * spec * sun;
     #endif
 
     #ifdef EMISSIVE_BLOCKS
         // The blocks whose light is their texture: warm fire, a cool sea lantern, redstone's own
         // red. The emission follows the texture, so a dark crack in lava stays dark, and it is
         // small enough that the film curve rolls it off instead of clipping the block to white.
-        float own = luma(albedoLinear);
-        if (material == 10004) color += vec3(1.00, 0.90, 0.72) * (0.36 * own + 0.14);
-        else if (material == 10005) color += vec3(1.00, 0.52, 0.18) * (0.32 * own + 0.12);
-        else if (material == 10006) color += vec3(0.95, 0.18, 0.06) * (0.20 * own + 0.05);
+        //
+        // `glow` is the texture's own brightness, and it is the last line of defence against a
+        // block turning pale: a dark texel (obsidian, the shell of a pumpkin) emits nothing at
+        // all, while a genuinely bright one (glowstone, a flame, lava) emits its colour. Some
+        // clients give an emissive id to a sprite shared with a plain block, so the id alone is
+        // not trusted.
+        if (material >= 10004 && material <= 10006) {
+            float own = luma(albedoLinear);
+            float glow = smoothstep(0.03, 0.20, own);
+            if (material == 10004) {
+                color += vec3(1.00, 0.90, 0.72) * (0.40 * own + 0.12) * glow;
+            } else if (material == 10005) {
+                color += vec3(1.00, 0.52, 0.18) * (0.38 * own + 0.10) * glow;
+            } else {
+                color += vec3(0.95, 0.18, 0.06) * (0.24 * own + 0.05) * glow;
+            }
+        }
     #endif
 
     #ifdef CLOUDS
         // A silver lining where the cloud's edge meets the sky.
-        color += skyAmbient(sunDir()) * grazing * 1.6;
+        color += skyAmbient(s) * grazing * 1.6;
     #endif
 
     // A little light through the thin parts of grass and leaves: the sun shows on the far side
     // of a blade, the way it does through real foliage, without a second material pass.
     if (material == 10002 || material == 10003) {
         float back = max(dot(-normal, keyLightDir()), 0.0);
-        color += albedoLinear * (sunlight(sunDir()) + moonlight(sunDir())) * back * 0.16 * sun;
+        color += albedoLinear * (sunColor + moonColor) * back * 0.16 * sun;
     }
 
     #ifdef WATER
         if (material == 10001) {
-            vec3 s = sunDir();
             vec3 n = normalize(normal);
             vec3 view = rel / max(length(rel), 1e-4);
             // Its open surface moves with waves; the sides of falling water stay flat.
@@ -292,7 +310,7 @@ void main() {
             vec3 reflected = skyAmbient(s) * (0.40 + 0.60 * skyLevel);
             // The moon's or sun's path: a tight lobe plus a broad sheen, both shadowed.
             float mu = max(dot(mirrored, keyLightDir()), 0.0);
-            reflected += (sunlight(s) + moonlight(s) * 2.5)
+            reflected += (sunColor + moonColor * 2.5)
                 * (pow(mu, 320.0) * 1.4 + pow(mu, 36.0) * 0.16 + pow(mu, 8.0) * 0.04) * sun;
             // How much water the eye looks through to the bottom (the depth without water): clear
             // where shallow, its own colour where deep.

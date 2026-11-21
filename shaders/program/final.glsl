@@ -1,4 +1,4 @@
-// Starling Visuals 3.0: the lens. Bloom from colortex0's mipmaps (the scene at ever smaller
+// Starling Visuals 3.1: the lens. Bloom from colortex0's mipmaps (the scene at ever smaller
 // sizes, which the game makes before this pass), the sun's rays from where the sky shows on the
 // way to it (their alpha, at a small size: soft without many samples), a light edge smooth, a
 // fine sharpen, then the film curve, the grade, the vignette and the grain. Every stage is a
@@ -7,7 +7,9 @@
 // The bloom used to read four taps at each of five mip levels (twenty fetches). 2.1 reads four
 // taps at the near level and one at each far level: the far levels are already so blurred that
 // their extra taps only cost bandwidth. The rays now test two points toward the sun first and
-// skip the whole loop where the sky cannot show, which is most of the screen.
+// skip the whole loop where the sky cannot show, which is most of the screen. 3.1 fuses the
+// edge smooth and the unsharp mask into one pass over the same four neighbours: four fetches
+// instead of eight, with the same picture.
 
 #include "/lib/common.glsl"
 
@@ -112,32 +114,28 @@ vec3 raysAt(vec2 uv) {
     return (sunlight(s) + moonlight(s) * 3.0) * open * forward * air * GODRAYS_STRENGTH * 0.6;
 }
 
-// A light edge-aware smooth, in linear light, before the film curve: the stair-step edge of a
-// distant block or a leaf becomes a soft line without a full FXAA pass. Only a strong local
-// contrast is touched, so textures keep their detail.
-vec3 smoothEdges(vec3 color, vec2 uv) {
+// A light edge-aware smooth and a small unsharp mask in one pass, in linear light before the
+// film curve. Both need the same four neighbours, so they read them once: four fetches instead
+// of eight on the profile that has both on. The smooth runs first, on the strong edges only (a
+// distant block or a leaf, not a texture's detail); the mask then sharpens what is left, so a
+// phone's small screen keeps the edges readable without a halo.
+vec3 finishEdges(vec3 color, vec2 uv) {
     vec2 texel = 1.0 / vec2(viewWidth, viewHeight);
     vec3 l = texture2D(colortex0, uv - vec2(texel.x, 0.0)).rgb;
     vec3 r = texture2D(colortex0, uv + vec2(texel.x, 0.0)).rgb;
     vec3 d = texture2D(colortex0, uv - vec2(0.0, texel.y)).rgb;
     vec3 u = texture2D(colortex0, uv + vec2(0.0, texel.y)).rgb;
+    vec3 blur = (l + r + d + u) * 0.25;
+#ifdef SMOOTH_EDGES
     float lo = min(luma(color), min(min(luma(l), luma(r)), min(luma(d), luma(u))));
     float hi = max(luma(color), max(max(luma(l), luma(r)), max(luma(d), luma(u))));
     float edge = smoothstep(0.08, 0.65, hi - lo);
-    vec3 blur = (l + r + d + u) * 0.25;
-    return mix(color, blur, edge * 0.45);
-}
-
-// A four-tap unsharp mask, in linear light, before the film curve: the edges of leaves, glass and
-// distant blocks stay readable on a phone's small screen without the halo of a strong sharpen.
-vec3 sharpen(vec3 color, vec2 uv) {
-    vec2 texel = 1.0 / vec2(viewWidth, viewHeight);
-    vec3 blur = 0.25 * (
-        texture2D(colortex0, uv + vec2(texel.x, 0.0)).rgb
-        + texture2D(colortex0, uv - vec2(texel.x, 0.0)).rgb
-        + texture2D(colortex0, uv + vec2(0.0, texel.y)).rgb
-        + texture2D(colortex0, uv - vec2(0.0, texel.y)).rgb);
-    return max(color + (color - blur) * SHARPEN_STRENGTH, 0.0);
+    color = mix(color, blur, edge * 0.45);
+#endif
+#ifdef SHARPEN
+    color = max(color + (color - blur) * SHARPEN_STRENGTH, 0.0);
+#endif
+    return color;
 }
 
 // A restrained teal-and-amber grade: cool shade, warm light, and a little contrast around middle
@@ -182,11 +180,8 @@ void main() {
         // A touch of warmth in the glow, the way a film's halation picks up the emulsion's dye.
         color = mix(color, bloomAt(texcoord) * vec3(1.03, 0.99, 0.95), BLOOM_STRENGTH);
     #endif
-    #ifdef SMOOTH_EDGES
-        color = smoothEdges(color, texcoord);
-    #endif
-    #ifdef SHARPEN
-        color = sharpen(color, texcoord);
+    #if defined SMOOTH_EDGES || defined SHARPEN
+        color = finishEdges(color, texcoord);
     #endif
     color = toDisplay(tonemap(color));
     #ifdef COLOR_GRADE
