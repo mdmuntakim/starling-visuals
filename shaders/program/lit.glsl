@@ -241,6 +241,7 @@ void main() {
     // The sun's and moon's colours once per pixel: the highlight, the light through a leaf and
     // the water all used to normalize the light direction and run the atmosphere again.
     vec3 s = sunDir();
+    vec3 keyDir = keyLightDir();
     vec3 sunColor = sunlight(s);
     vec3 moonColor = moonlight(s);
 
@@ -270,12 +271,18 @@ void main() {
         // not trusted.
         if (material >= 10004 && material <= 10006) {
             float own = luma(albedoLinear);
-            float glow = smoothstep(0.03, 0.20, own);
+            // Emission only from a texel that is itself bright: a dark texel (obsidian, the
+            // shell of a pumpkin) emits nothing, and there is no flat constant lifting it.
+            // Cold light and fire need a bright texture; redstone keeps a small constant so a
+            // circuit still reads at night.
             if (material == 10004) {
-                color += vec3(1.00, 0.90, 0.72) * (0.40 * own + 0.12) * glow;
+                float glow = smoothstep(0.10, 0.28, own);
+                color += vec3(1.00, 0.90, 0.72) * (0.55 * own) * glow;
             } else if (material == 10005) {
-                color += vec3(1.00, 0.52, 0.18) * (0.38 * own + 0.10) * glow;
+                float glow = smoothstep(0.08, 0.24, own);
+                color += vec3(1.00, 0.52, 0.18) * (0.50 * own) * glow;
             } else {
+                float glow = smoothstep(0.03, 0.16, own);
                 color += vec3(0.95, 0.18, 0.06) * (0.24 * own + 0.05) * glow;
             }
         }
@@ -289,7 +296,7 @@ void main() {
     // A little light through the thin parts of grass and leaves: the sun shows on the far side
     // of a blade, the way it does through real foliage, without a second material pass.
     if (material == 10002 || material == 10003) {
-        float back = max(dot(-normal, keyLightDir()), 0.0);
+        float back = max(dot(-normal, keyDir), 0.0);
         color += albedoLinear * (sunColor + moonColor) * back * 0.16 * sun;
     }
 
@@ -309,7 +316,7 @@ void main() {
             // sample instead of a full directional sky per water pixel.
             vec3 reflected = skyAmbient(s) * (0.40 + 0.60 * skyLevel);
             // The moon's or sun's path: a tight lobe plus a broad sheen, both shadowed.
-            float mu = max(dot(mirrored, keyLightDir()), 0.0);
+            float mu = max(dot(mirrored, keyDir), 0.0);
             reflected += (sunColor + moonColor * 2.5)
                 * (pow(mu, 320.0) * 1.4 + pow(mu, 36.0) * 0.16 + pow(mu, 8.0) * 0.04) * sun;
             // How much water the eye looks through to the bottom (the depth without water): clear
