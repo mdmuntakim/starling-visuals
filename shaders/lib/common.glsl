@@ -1,4 +1,4 @@
-// Starling Visuals 2.1: the uniforms every program reads, and the light, sky and lens model.
+// Starling Visuals 3.0: the uniforms every program reads, and the light, sky and lens model.
 // Colours are linear and in the scene's own units: the sun gives about SUN_STRENGTH, the open
 // sky a fraction of it, and the final pass is the only place display gamma is applied.
 //
@@ -109,9 +109,11 @@ vec3 skyRadiance(vec3 d, vec3 s) {
     // The sun warms the horizon around it; a broad Mie haze surrounds it all day, a tight
     // aureole sits inside it, and at night the moon has its own much cooler halo.
     float toward = max(dot(d, s), 0.0);
-    color += vec3(1.00, 0.40, 0.12) * lowSun * day * pow(toward, 4.0) * horizon * 2.2;
-    color += sunlight(s) * (0.50 / SUN_STRENGTH) * (pow(toward, 24.0) + 0.35 * pow(toward, 5.0));
-    color += vec3(0.10, 0.16, 0.32) * (1.0 - day) * pow(max(dot(d, keyLightDir()), 0.0), 20.0) * 0.30;
+    color += vec3(1.00, 0.42, 0.14) * lowSun * day * pow(toward, 4.0) * horizon * 2.6;
+    color += vec3(1.00, 0.55, 0.28) * lowSun * day * pow(toward, 2.0) * horizon * 0.9;
+    color += sunlight(s) * (0.55 / SUN_STRENGTH) * (pow(toward, 256.0) * 0.9 + pow(toward, 24.0) + 0.40 * pow(toward, 5.0));
+    color += vec3(0.10, 0.16, 0.32) * (1.0 - day) * pow(max(dot(d, keyLightDir()), 0.0), 20.0) * 0.35;
+    color += vec3(0.05, 0.09, 0.20) * (1.0 - day) * pow(max(dot(d, keyLightDir()), 0.0), 6.0) * 0.18;
 
     // Under the horizon, hazy land as far as the horizon's colour, darker looking further down.
     color *= mix(1.0, 0.5, smoothstep(0.1, 0.7, -d.y));
@@ -152,18 +154,29 @@ vec3 nightSky(vec3 d, vec3 s, float t) {
     float dust = 0.55 + 0.45 * valueNoise2(q * 3.2 + vec2(13.0, 4.0));
     color += vec3(0.030, 0.034, 0.060) * band * dust * night * smoothstep(-0.05, 0.25, d.y);
 
-    // Two star layers. A cell holds at most one star; the threshold leaves most cells empty.
-    for (int layer = 0; layer < 2; layer++) {
-        float scale = layer == 0 ? 130.0 : 260.0;
+    // Three star layers now: a dim field, a bright field and a few very bright ones, so the
+    // sky has depth instead of a single sprinkle of points.
+    for (int layer = 0; layer < 3; layer++) {
+        float scale = layer == 0 ? 110.0 : (layer == 1 ? 230.0 : 410.0);
         vec3 p = d * scale + float(layer) * 17.0;
         vec3 cell = floor(p);
         vec3 f = fract(p) - 0.5;
         float h = hash13(cell);
-        float threshold = layer == 0 ? 0.982 : 0.991;
-        float star = smoothstep(0.10, 0.0, length(f)) * smoothstep(threshold, 1.0, h);
-        float twinkle = 0.65 + 0.35 * sin(t * (1.3 + h * 2.7) + h * 61.0);
+        float threshold = layer == 0 ? 0.978 : (layer == 1 ? 0.988 : 0.996);
+        float star = smoothstep(0.12, 0.0, length(f)) * smoothstep(threshold, 1.0, h);
+        float twinkle = 0.60 + 0.40 * sin(t * (1.1 + h * 2.9) + h * 61.0);
         vec3 tint = mix(vec3(0.72, 0.82, 1.0), vec3(1.0, 0.88, 0.72), hash13(cell + 7.0));
-        color += tint * star * twinkle * night * (layer == 0 ? 0.55 : 0.9);
+        color += tint * star * twinkle * night * (layer == 0 ? 0.45 : (layer == 1 ? 0.8 : 1.25));
+    }
+
+    // A faint nebula: a coloured cloud across the upper sky, so the night is not pure black.
+    {
+        vec2 q = d.xz / max(d.y + 0.25, 0.12);
+        float n1 = valueNoise2(q * 2.4 + vec2(3.0, 7.0));
+        float n2 = valueNoise2(q * 5.1 - vec2(11.0, 2.0));
+        float neb = pow(n1, 2.0) * (0.5 + 0.5 * n2);
+        neb *= smoothstep(0.05, 0.45, d.y) * night;
+        color += mix(vec3(0.18, 0.08, 0.32), vec3(0.06, 0.22, 0.38), n2) * neb * 0.18;
     }
 
 #ifdef AURORA

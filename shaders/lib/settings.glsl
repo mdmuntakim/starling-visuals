@@ -1,4 +1,4 @@
-// Starling Visuals 2.1: every option the pack exposes. The defaults are the HIGH profile, the
+// Starling Visuals 3.0: every option the pack exposes. The defaults are the HIGH profile, the
 // one the game's Auto picks on a strong phone; profile.LOW in shaders.properties removes the
 // expensive parts for a weaker device. Values are deliberately conservative on a phone: the
 // pack spends its pixels on the world and the sky, not on deep sample counts.

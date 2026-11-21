@@ -1,9 +1,9 @@
-# Starling Visuals 2.1
+# Starling Visuals 3.0
 
 Starling Visuals is Starling's own shader pack for Minecraft on a phone, written in the Iris /
-OptiFine `shaders/` format. Version 2.1 is the "ultimate" pass over the look and the cost: the
-pack is cheaper on every profile than 2.0, the sun can no longer turn a whole face white, the
-block outline is black, and the sky, water and lens are a step further from vanilla.
+OptiFine `shaders/` format. Version 3.0 is the ultimate pass: extreme optimisation, a black
+block outline, no block ever turns into a flat sheet of white, and a cinematic lens, sky, water
+and lighting stack that pushes a one-metre-cube world as far as a phone can take it.
 
 The pack ships inside the Starling APK as `assets/StarlingVisuals.zip`; this repository is the
 standalone source and the release download.

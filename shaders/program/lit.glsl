@@ -1,4 +1,4 @@
-// Starling Visuals 2.1: everything drawn with the world's light, in one forward pass. The light
+// Starling Visuals 3.0: everything drawn with the world's light, in one forward pass. The light
 // is worked out per vertex (faces are flat and the lightmap is per vertex anyway); the fragment
 // stage samples, looks the sun up in the shadow map, adds the surface's own response, and
 // blends. Water adds its waves, reflection and foam. `composite` adds the haze and the sky.
@@ -242,6 +242,9 @@ void main() {
     // edge reads as a square corner. Lifting the surface toward the sky's own light as the eye
     // looks at it nearly edge-on rounds that corner softly. It is computed per vertex above.
     vec3 color = mix(lit, albedoLinear * fill, grazing);
+    // No face is ever allowed to leave the lens as a flat sheet of white: the sun's highlight
+    // is Fresnel-weighted in the vertex stage, and this clamp is the last line of defence.
+    color = min(color, vec3(6.0));
 
     #ifdef SPECULAR
         // The sun's or moon's image on the surface. `spec` is the vertex's Fresnel-weighted
@@ -254,15 +257,22 @@ void main() {
         // red. The emission follows the texture, so a dark crack in lava stays dark, and it is
         // small enough that the film curve rolls it off instead of clipping the block to white.
         float own = luma(albedoLinear);
-        if (material == 10004) color += vec3(1.00, 0.88, 0.70) * (0.34 * own + 0.12);
-        else if (material == 10005) color += vec3(1.00, 0.55, 0.22) * (0.30 * own + 0.10);
-        else if (material == 10006) color += vec3(0.90, 0.16, 0.08) * (0.18 * own + 0.04);
+        if (material == 10004) color += vec3(1.00, 0.90, 0.72) * (0.36 * own + 0.14);
+        else if (material == 10005) color += vec3(1.00, 0.52, 0.18) * (0.32 * own + 0.12);
+        else if (material == 10006) color += vec3(0.95, 0.18, 0.06) * (0.20 * own + 0.05);
     #endif
 
     #ifdef CLOUDS
         // A silver lining where the cloud's edge meets the sky.
         color += skyAmbient(sunDir()) * grazing * 1.6;
     #endif
+
+    // A little light through the thin parts of grass and leaves: the sun shows on the far side
+    // of a blade, the way it does through real foliage, without a second material pass.
+    if (material == 10002 || material == 10003) {
+        float back = max(dot(-normal, keyLightDir()), 0.0);
+        color += albedoLinear * (sunlight(sunDir()) + moonlight(sunDir())) * back * 0.16 * sun;
+    }
 
     #ifdef WATER
         if (material == 10001) {
@@ -279,21 +289,22 @@ void main() {
             float fres = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
             // The sky's average is enough for a reflection at this scale, and it is one cheap
             // sample instead of a full directional sky per water pixel.
-            vec3 reflected = skyAmbient(s) * (0.35 + 0.65 * skyLevel);
+            vec3 reflected = skyAmbient(s) * (0.40 + 0.60 * skyLevel);
             // The moon's or sun's path: a tight lobe plus a broad sheen, both shadowed.
             float mu = max(dot(mirrored, keyLightDir()), 0.0);
-            reflected += (sunlight(s) + moonlight(s) * 2.0)
-                * (pow(mu, 220.0) * 1.1 + pow(mu, 24.0) * 0.10) * sun;
+            reflected += (sunlight(s) + moonlight(s) * 2.5)
+                * (pow(mu, 320.0) * 1.4 + pow(mu, 36.0) * 0.16 + pow(mu, 8.0) * 0.04) * sun;
             // How much water the eye looks through to the bottom (the depth without water): clear
             // where shallow, its own colour where deep.
             float bottom = texture2D(depthtex1, gl_FragCoord.xy / vec2(viewWidth, viewHeight)).r;
             vec4 under = gbufferProjectionInverse * vec4(vec3(gl_FragCoord.xy / vec2(viewWidth, viewHeight), bottom) * 2.0 - 1.0, 1.0);
             float through = bottom >= 1.0 ? 64.0 : max(length(under.xyz / under.w) - length(rel), 0.0);
-            float body = clamp(1.0 - exp(-through * 0.35), 0.12, 0.92);
-            // A thin white edge where the water meets the shore.
-            float foam = (1.0 - smoothstep(0.0, 0.55, through)) * 0.55;
-            vec3 water = mix(color * 0.45, reflected, fres);
-            water = mix(water, vec3(0.72, 0.84, 0.88) * (0.35 + 0.65 * skyLevel), foam);
+            float body = clamp(1.0 - exp(-through * 0.32), 0.10, 0.94);
+            // A thin bright edge where the water meets the shore, with a little chop.
+            float foam = (1.0 - smoothstep(0.0, 0.60, through)) * (0.50 + 0.15 * sin(rel.x * 3.0 + frameTimeCounter * 2.0));
+            foam = clamp(foam, 0.0, 0.75);
+            vec3 water = mix(color * 0.42, reflected, fres);
+            water = mix(water, vec3(0.78, 0.88, 0.92) * (0.40 + 0.60 * skyLevel), foam);
             color = water;
             alpha = mix(body, 1.0, fres);
             alpha = max(alpha, foam);

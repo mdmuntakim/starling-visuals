@@ -1,4 +1,4 @@
-// Starling Visuals 2.1: unlit geometry. `gbuffers_basic` draws the block outline, debug lines and
+// Starling Visuals 3.0: unlit geometry. `gbuffers_basic` draws the block outline, debug lines and
 // the game's solid-colour shapes; nothing here samples the block atlas, because these vertices
 // have no meaningful texture coordinates and sampling one arbitrary atlas texel is how basic
 // geometry turns into a random colour.

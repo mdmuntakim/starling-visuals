@@ -1,4 +1,4 @@
-// Starling Visuals 2.1: the lens. Bloom from colortex0's mipmaps (the scene at ever smaller
+// Starling Visuals 3.0: the lens. Bloom from colortex0's mipmaps (the scene at ever smaller
 // sizes, which the game makes before this pass), the sun's rays from where the sky shows on the
 // way to it (their alpha, at a small size: soft without many samples), a light edge smooth, a
 // fine sharpen, then the film curve, the grade, the vignette and the grain. Every stage is a
@@ -148,18 +148,33 @@ vec3 grade(vec3 c) {
     c = clamp(c, 0.0, 1.0);
     c = (c - 0.5) * CONTRAST + 0.5;
     float l = luma(c);
-    vec3 warm = mix(vec3(1.0), vec3(1.045, 1.0, 0.945), max(WARMTH, 0.0));
-    vec3 cool = mix(vec3(1.0), vec3(0.955, 1.0, 1.055), max(0.0 - WARMTH, 0.0));
+    vec3 warm = mix(vec3(1.0), vec3(1.055, 1.005, 0.935), max(WARMTH, 0.0));
+    vec3 cool = mix(vec3(1.0), vec3(0.945, 0.995, 1.065), max(0.0 - WARMTH, 0.0));
     c *= mix(warm, cool, step(WARMTH, 0.0));
-    c += vec3(-0.010, 0.002, 0.016) * (1.0 - l);
-    c += vec3(0.016, 0.006, -0.010) * l;
-    float peak = smoothstep(0.74, 1.0, luma(c));
-    c = mix(c, vec3(luma(c)), peak * 0.22);
+    // Split toning: cool shadows, warm highlights, like a single film stock.
+    c += vec3(-0.014, 0.000, 0.022) * (1.0 - l) * (1.0 - l);
+    c += vec3(0.020, 0.008, -0.014) * l * l;
+    float peak = smoothstep(0.70, 1.0, luma(c));
+    c = mix(c, vec3(luma(c)), peak * 0.26);
     return clamp(c, 0.0, 1.0);
 }
 
 void main() {
-    vec3 color = texture2D(colortex0, texcoord).rgb;
+    // A subtle barrel lens and a touch of chromatic aberration: the frame reads as a
+    // camera's, not a flat rectangle, and the edges stay alive without a heavy post pass.
+    vec2 uv = texcoord;
+    {
+        vec2 c = uv - 0.5;
+        uv = 0.5 + c * (1.0 + 0.08 * dot(c, c));
+    }
+    vec3 color;
+    {
+        vec2 ca = (texcoord - 0.5) * 0.0025;
+        float r = texture2D(colortex0, clamp(uv + ca, 0.0, 1.0)).r;
+        float g = texture2D(colortex0, clamp(uv, 0.0, 1.0)).g;
+        float b = texture2D(colortex0, clamp(uv - ca, 0.0, 1.0)).b;
+        color = vec3(r, g, b);
+    }
     #ifdef GODRAYS
         if (isEyeInWater == 0) color += raysAt(texcoord);
     #endif
