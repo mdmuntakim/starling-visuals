@@ -1,45 +1,55 @@
-# Starling Visuals 2
+# Starling Visuals 2.1
 
 Starling Visuals is Starling's own shader pack for Minecraft on a phone, written in the Iris /
-OptiFine `shaders/` format. Version 2 is a full pass over the look and the cost: more of the
-world is lit and shaded, the night sky has depth, the air and the lens have their own character,
-and the whole pack is a ladder of three profiles so the game can pick the right one for the
-device automatically.
+OptiFine `shaders/` format. Version 2.1 is the "ultimate" pass over the look and the cost: the
+pack is cheaper on every profile than 2.0, the sun can no longer turn a whole face white, the
+block outline is black, and the sky, water and lens are a step further from vanilla.
 
 The pack ships inside the Starling APK as `assets/StarlingVisuals.zip`; this repository is the
 standalone source and the release download.
 
-## What is new in 2
+## What is new in 2.1
 
-- **Contact shadows (SSAO).** Depth-only, eight taps, narrow enough to seat a fence post on the
-  ground and darken the inside of a corner; off in the Low profile.
-- **Surface highlights.** A sun/moon highlight on stone, ice, metal and wet ground, stronger in
-  rain and after it, with a gloss that follows the block's material id.
-- **Wind.** Grass and leaves move in the world and in their shadows, on the same phase, so a
-  leaf's shadow moves with the leaf.
-- **Emissive blocks.** Glowstone, sea lanterns, fire, lava, lanterns, redstone and the rest add
-  their own light to their texture instead of only through the lightmap.
-- **Better water.** Four travelling wave sets plus rain chop, a Fresnel reflection of the sky, a
-  shore foam edge, the moon's path at night, and a depth-based body colour.
-- **A night sky with depth.** Two layers of procedural stars, a faint milky way, a cool moon, and
-  an optional aurora curtain low in the north.
-- **Underwater.** Caustics on the bottom and in the water volume, with the eye's own tint.
-- **Air and light.** Height fog with sun in-scattering, a broader sun halo, and a haze that knows
-  whether the eye has sky above it.
-- **A lens.** ACES / soft AgX / Reinhard tone curves, a restrained teal-and-amber grade, a small
-  unsharp mask, a vignette, animated grain and a final dither so the night sky does not band.
+- **The white-block bug is fixed.** The old specular returned the peak of a Blinn-Phong lobe
+  (about four) times a full sun's irradiance, so every top face at noon sat inside the highlight
+  and clipped. The lobe is now Fresnel-weighted (4% head-on, strong only at a grazing look) and
+  the emissive blocks emit from their own texture with a small, bounded amount instead of a
+  large flat constant. Glowstone, lava, fire, sea lanterns and redstone keep their colour and
+  roll into the film curve instead of becoming a sheet of white.
+- **The block outline is black.** `gbuffers_basic` was shipped pointing at a `program/basic.glsl`
+  that did not exist, so any client that draws basic geometry (the block outline, debug lines)
+  got a broken program. The program now exists and is unlit: it never samples the block atlas,
+  and a black basic vertex (the outline) is written opaque, so the film curve cannot lift it to
+  white. `tools/check_includes.py` and CI now fail if an include is missing again.
+- **The lens has a real black point.** The default curve is ACES (Stephen Hill's RRT + ODT fit)
+  with a soft filmic and an extended Reinhard alternative. Midtones are no longer lifted to
+  grey, the top of the range desaturates like film instead of clipping, and bloom uses a soft
+  knee.
+- **Cheaper on a phone.** The shadow edge is two taps (one on LOW) instead of four; the bloom is
+  eight fetches instead of twenty; the rays test two points before the loop and skip most of the
+  screen; SSAO fades out past 26 blocks; the Fresnel edge and the sun's highlight moved to the
+  vertex stage (every face is flat); the sky's night noise is 2D (four hashes, not eight); the
+  haze uses one cheap sky sample instead of a full directional one per pixel.
+- **A better sky.** A two-lobe Mie sun with a tight aureole, a warm low-sun horizon, the moon's
+  cool halo, and the same two star layers, milky way and aurora for less.
+- **Better water.** A Fresnel reflection of the average sky, a sun/moon path with a tight and a
+  broad lobe, the shore foam, the depth body colour and rain chop, all shadowed.
+- **A smoother frame.** A light edge-aware smooth for distant blocks and leaves, a gentler
+  unsharp mask, a restrained teal-and-amber grade, vignette, animated grain and a final dither.
+- **Wet surfaces.** Rain darkens upward faces a little and the Fresnel highlight gets stronger,
+  so wet stone and wet grass read as wet without a second material pass.
+- **A polished material.** Ice, snow, glass, quartz, copper and the metal blocks have their own
+  gloss (`block.10007`) for a tighter highlight.
 - **Profiles that the game can rank.** `LOW`, `HIGH` and `ULTRA`; Auto reads what each asks of
   the options, not the names, and picks `HIGH` on a strong phone and `LOW` on a weak one.
-- **A deterministic 256x256 noise texture** for the dithering and the rays, instead of hiding a
-  random pattern in the shader.
 
 ## Profiles
 
 | Profile | What it is for | What it turns off or down |
 | --- | --- | --- |
-| `LOW` | a weak phone, or a long battery | contact shadows, rays, glow, highlights, stars, aurora, sharpen, vignette, grain; 512 shadow map, 32 block shadows, 4 SSAO taps |
-| `HIGH` | the default and what Auto picks on a strong phone | nothing; 1024 shadow map, 64 block shadows, 8 SSAO taps, 12 ray samples |
-| `ULTRA` | a tablet or a PC | 2048 shadow map, 96 block shadows, 12 SSAO taps, 16 ray samples, wider softness |
+| `LOW` | a weak phone, or a long battery | contact shadows, rays, glow, highlights, stars, aurora, edge smooth, sharpen, vignette, grain; 512 shadow map, 32 block shadows, 1 shadow tap, 4 SSAO taps, 6 ray samples |
+| `HIGH` | the default and what Auto picks on a strong phone | nothing; 1024 shadow map, 64 block shadows, 2 shadow taps, 6 SSAO taps, 8 ray samples |
+| `ULTRA` | a tablet or a PC | 2048 shadow map, 96 block shadows, 4 shadow taps, 10 SSAO taps, 12 ray samples, wider softness |
 
 Choose **Auto** on the Shader Packs page and the game limits the shadow map and distance to what
 the device can pay for, then loads the profile it ranked for that device. Choose a profile by
@@ -55,7 +65,8 @@ Shader Packs > Open Pack Folder), then pick **StarlingVisuals.zip** and set its 
 ## Build and check
 
 ```sh
-bash build.sh                 # dist/StarlingVisuals.zip
+python3 tools/check_includes.py   # every include resolves, every gbuffers stage is paired
+bash build.sh                     # dist/StarlingVisuals.zip
 HORIZON_REPO=../minecraft bash check.sh
 ```
 
@@ -65,12 +76,13 @@ with every switch on and off and every value at its highest and lowest. A pass i
 
 ```text
 == dist/StarlingVisuals.zip: 13 translate, 0 fail, 1 unused
-   profiles, lightest first (what Auto reads): LOW -12.8, HIGH 0.0, ULTRA 3.5
+   profiles, lightest first (what Auto reads): LOW -13.5, HIGH 0.0, ULTRA 3.9
    spir-v: 34 modules, 0 errors, 0 panics
 ```
 
-The one unused program is `gbuffers_basic`, which this pack keeps for compatibility and which
-the game does not draw on its own; it translates.
+The one unused program is `gbuffers_basic`, which the Starling client does not draw itself but
+Iris and OptiFine use for the block outline; it translates, and the check above also loads it as
+the sky fallback so a broken basic cannot ship again.
 
 ## A note on realism
 

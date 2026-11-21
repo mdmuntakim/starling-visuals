@@ -1,9 +1,14 @@
-// Starling Visuals 2: everything drawn with the world's light, in one forward pass. The light
+// Starling Visuals 2.1: everything drawn with the world's light, in one forward pass. The light
 // is worked out per vertex (faces are flat and the lightmap is per vertex anyway); the fragment
-// stage samples, looks the sun up in the shadow map, adds the surface's own highlight, and
+// stage samples, looks the sun up in the shadow map, adds the surface's own response, and
 // blends. Water adds its waves, reflection and foam. `composite` adds the haze and the sky.
 // The stage file defines VERTEX_SHADER or FRAGMENT_SHADER, and what it draws: TERRAIN, WATER,
 // ENTITIES, CLOUDS, PARTICLES, WEATHER or nothing (other textured things).
+//
+// 2.1 moves the Fresnel edge and the sun's highlight to the vertex stage. Every face in this
+// world is flat, so both vary slowly across it and interpolate smoothly; the fragment stage
+// keeps only the shadow lookup and the texture. That is two pow() calls and a normalize() per
+// pixel gone, and it is what makes the highlight stable instead of a crawling per-pixel lobe.
 
 #include "/lib/common.glsl"
 
@@ -22,6 +27,8 @@ flat out int material;
 out vec3 rel;
 out vec3 normal;
 out float skyLevel;
+out float grazing;
+out float spec;
 #ifdef SHADOWED
 out vec3 shadowClip;
 #endif
@@ -85,7 +92,10 @@ void main() {
         if (material == 10002 || material == 10003) {
             wrap = 1.0;
         } else {
-            unshade = 1.0 / max(bakedShade(n), 0.5);
+            // The game's baked face shade is already in the vertex colour; lift the light by its
+            // inverse so the pack's own sun is the only shade. Clamped: a down face's 0.5 would
+            // otherwise ask for twice the light of an up face and over-brighten what it can see.
+            unshade = clamp(1.0 / max(bakedShade(n), 0.5), 1.0, 1.65);
         }
     #endif
     #ifdef CLOUDS
@@ -107,6 +117,23 @@ void main() {
     rel = at;
     normal = n;
     skyLevel = levels.y;
+
+    // The view direction and the surface response, once per vertex instead of once per pixel.
+    vec3 v = -at / max(length(at), 1e-4);
+    float ndv = clamp(dot(n, v), 0.0, 1.0);
+    float plant = (material == 10001 || material == 10002 || material == 10003) ? 1.0 : 0.0;
+    grazing = pow(1.0 - ndv, 3.0) * 0.16 * (1.0 - plant * 0.7);
+    spec = 0.0;
+    #ifdef SPECULAR
+        // A polished face (ice, packed ice, glass, snow, metal) gets a tighter lobe than stone.
+        // Plants and water are excluded: their normals are arbitrary and water has its own.
+        if (plant < 0.5 && material != 10004 && material != 10005 && material != 10006) {
+            float power = material == 10007 ? 140.0 : 48.0;
+            float wet = clamp(wetness * 1.3 + rainStrength * 0.35, 0.0, 1.0);
+            spec = specular(n, v, keyLightDir(), power) * fresnel(n, v) * (0.06 + wet * 0.34);
+        }
+    #endif
+
     #ifdef SHADOWED
         // Off the surface a little, along its normal (toward the light for plants, whose normals
         // point anywhere), so that it doesn't shadow itself; further with distance, where the
@@ -129,6 +156,8 @@ flat in int material;
 in vec3 rel;
 in vec3 normal;
 in float skyLevel;
+in float grazing;
+in float spec;
 #ifdef SHADOWED
 in vec3 shadowClip;
 #endif
@@ -161,22 +190,26 @@ vec3 waveNormal(vec2 p, float t) {
 #endif
 
 // How much of the sun reaches this point: the shadow map within its reach, the open sky past it.
-// Each lookup is filtered by the hardware over four texels; SHADOW_FILTER 4 takes four of them
-// on a rotated grid, which softens the edges and their crawl as the sun moves.
+// One `shadow2D` is already four texels of hardware filtering; SHADOW_FILTER 2 adds a second
+// tap on the opposite diagonal, which is half the cost of the old four-tap grid and just as
+// smooth on a phone's screen.
 float sunReaches() {
     #ifdef SHADOWED
         float reach = max(abs(shadowClip.x), abs(shadowClip.y));
         if (reach < 1.0) {
             vec3 at = vec3(distortShadow(shadowClip.xy), shadowClip.z) * 0.5 + 0.5;
             at.z -= 0.0002;
+            float radius = SHADOW_SOFTNESS / float(shadowMapResolution);
             #if SHADOW_FILTER == 4
-                // SHADOW_SOFTNESS texels out, on a grid turned by about 18 degrees.
-                float radius = SHADOW_SOFTNESS / float(shadowMapResolution);
                 float lit = 0.25 * (
                     shadow2D(shadowtex0, at + vec3(vec2(0.95, 0.32) * radius, 0.0)).r
                     + shadow2D(shadowtex0, at + vec3(vec2(-0.32, 0.95) * radius, 0.0)).r
                     + shadow2D(shadowtex0, at + vec3(vec2(-0.95, -0.32) * radius, 0.0)).r
                     + shadow2D(shadowtex0, at + vec3(vec2(0.32, -0.95) * radius, 0.0)).r);
+            #elif SHADOW_FILTER == 2
+                float lit = 0.5 * (
+                    shadow2D(shadowtex0, at + vec3(vec2(0.7, 0.7) * radius, 0.0)).r
+                    + shadow2D(shadowtex0, at + vec3(vec2(-0.7, -0.7) * radius, 0.0)).r);
             #else
                 float lit = shadow2D(shadowtex0, at).r;
             #endif
@@ -193,65 +226,76 @@ void main() {
         albedo.rgb = mix(albedo.rgb, entityColor.rgb, entityColor.a);
     #endif
 
+    // Rain darkens the upward faces a little: wet stone and wet grass read darker and glossier.
+    float wet = clamp(wetness * 1.3 + rainStrength * 0.35, 0.0, 1.0);
+    if (material != 10001 && material != 10002 && material != 10003 && material != 10004
+        && material != 10005 && material != 10006) {
+        albedo.rgb *= mix(1.0, 0.86, wet * smoothstep(0.15, 0.9, normal.y));
+    }
+
     float sun = dot(key, vec3(1.0)) > 0.0 ? sunReaches() : 0.0;
-    vec3 lit = toLinear(albedo.rgb) * (fill + key * sun);
+    vec3 albedoLinear = toLinear(albedo.rgb);
+    vec3 lit = albedoLinear * (fill + key * sun);
     float alpha = albedo.a;
 
-    // A grazing-angle fresnel fill: the world's cubes come out of Minecraft with hard edges, and a
-    // hard edge reads as a square corner. Lifting the surface toward the sky's own light as the
-    // eye looks at it nearly edge-on rounds that corner softly, so blocks stop reading as flat
-    // square cards and their corners come out rounded instead of rectangular.
-    float grazing = pow(1.0 - clamp(dot(normalize(normal), normalize(-rel)), 0.0, 1.0), 3.0);
-    vec3 color = mix(lit, toLinear(albedo.rgb) * fill, grazing * 0.22);
+    // A grazing-angle fill: the world's cubes come out of Minecraft with hard edges, and a hard
+    // edge reads as a square corner. Lifting the surface toward the sky's own light as the eye
+    // looks at it nearly edge-on rounds that corner softly. It is computed per vertex above.
+    vec3 color = mix(lit, albedoLinear * fill, grazing);
 
     #ifdef SPECULAR
-        // A highlight on the sun-facing side only, and stronger when the world is wet. Plants
-        // are excluded (their normals are arbitrary) and so is water (it has its own).
-        if (!(material == 10001 || material == 10002 || material == 10003)) {
-            vec3 v = normalize(-rel);
-            vec3 n = normalize(normal);
-            float gloss = material == 10004 ? 90.0 : 42.0;
-            float wet = clamp(wetness * 1.4 + rainStrength * 0.35, 0.0, 1.0);
-            float s = specular(n, v, keyLightDir(), gloss) * sun * (0.10 + wet * 0.55);
-            color += sunlight(sunDir()) * s * mix(vec3(1.0), vec3(0.85, 0.93, 1.0), wet);
-        }
+        // The sun's or moon's image on the surface. `spec` is the vertex's Fresnel-weighted
+        // lobe; the shadow lookup and the light's colour are the only per-pixel parts.
+        color += (sunlight(sunDir()) + moonlight(sunDir()) * 2.0) * spec * sun;
     #endif
 
     #ifdef EMISSIVE_BLOCKS
-        // The blocks whose light is their texture: warm fire, a cool sea lantern, redstone's
-        // own red. The material ids are in block.properties.
-        if (material == 10004) color += vec3(1.0, 0.72, 0.38) * 1.55;
-        else if (material == 10005) color += vec3(1.0, 0.48, 0.16) * 1.35;
-        else if (material == 10006) color += vec3(0.85, 0.10, 0.06) * 0.85;
+        // The blocks whose light is their texture: warm fire, a cool sea lantern, redstone's own
+        // red. The emission follows the texture, so a dark crack in lava stays dark, and it is
+        // small enough that the film curve rolls it off instead of clipping the block to white.
+        float own = luma(albedoLinear);
+        if (material == 10004) color += vec3(1.00, 0.88, 0.70) * (0.34 * own + 0.12);
+        else if (material == 10005) color += vec3(1.00, 0.55, 0.22) * (0.30 * own + 0.10);
+        else if (material == 10006) color += vec3(0.90, 0.16, 0.08) * (0.18 * own + 0.04);
+    #endif
+
+    #ifdef CLOUDS
+        // A silver lining where the cloud's edge meets the sky.
+        color += skyAmbient(sunDir()) * grazing * 1.6;
     #endif
 
     #ifdef WATER
         if (material == 10001) {
             vec3 s = sunDir();
             vec3 n = normalize(normal);
-            vec3 view = normalize(rel);
+            vec3 view = rel / max(length(rel), 1e-4);
             // Its open surface moves with waves; the sides of falling water stay flat.
             #ifdef WATER_WAVES
                 if (n.y > 0.9) n = waveNormal(rel.xz + cameraPosition.xz, frameTimeCounter);
             #endif
             vec3 mirrored = reflect(view, n);
             mirrored.y = abs(mirrored.y);
-            float fresnel = 0.02 + 0.98 * pow(1.0 - clamp(dot(-view, n), 0.0, 1.0), 5.0);
-            vec3 reflected = skyRadiance(mirrored, s) * skyLevel;
-            float glint = pow(clamp(dot(mirrored, keyLightDir()), 0.0, 1.0), 600.0);
+            float ndv = clamp(dot(-view, n), 0.0, 1.0);
+            float fres = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
+            // The sky's average is enough for a reflection at this scale, and it is one cheap
+            // sample instead of a full directional sky per water pixel.
+            vec3 reflected = skyAmbient(s) * (0.35 + 0.65 * skyLevel);
+            // The moon's or sun's path: a tight lobe plus a broad sheen, both shadowed.
+            float mu = max(dot(mirrored, keyLightDir()), 0.0);
+            reflected += (sunlight(s) + moonlight(s) * 2.0)
+                * (pow(mu, 220.0) * 1.1 + pow(mu, 24.0) * 0.10) * sun;
             // How much water the eye looks through to the bottom (the depth without water): clear
             // where shallow, its own colour where deep.
             float bottom = texture2D(depthtex1, gl_FragCoord.xy / vec2(viewWidth, viewHeight)).r;
             vec4 under = gbufferProjectionInverse * vec4(vec3(gl_FragCoord.xy / vec2(viewWidth, viewHeight), bottom) * 2.0 - 1.0, 1.0);
             float through = bottom >= 1.0 ? 64.0 : max(length(under.xyz / under.w) - length(rel), 0.0);
             float body = clamp(1.0 - exp(-through * 0.35), 0.12, 0.92);
-            // A thin white edge where the water meets the shore, then the sun's own path.
+            // A thin white edge where the water meets the shore.
             float foam = (1.0 - smoothstep(0.0, 0.55, through)) * 0.55;
-            vec3 water = mix(color * 0.45, reflected, fresnel);
-            water += sunlight(s) * glint * 6.0 * sunReaches();
+            vec3 water = mix(color * 0.45, reflected, fres);
             water = mix(water, vec3(0.72, 0.84, 0.88) * (0.35 + 0.65 * skyLevel), foam);
             color = water;
-            alpha = mix(body, 1.0, fresnel);
+            alpha = mix(body, 1.0, fres);
             alpha = max(alpha, foam);
         }
     #endif

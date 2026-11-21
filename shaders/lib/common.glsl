@@ -1,6 +1,10 @@
-// Starling Visuals 2: the uniforms every program reads, and the light, sky and lens model.
+// Starling Visuals 2.1: the uniforms every program reads, and the light, sky and lens model.
 // Colours are linear and in the scene's own units: the sun gives about SUN_STRENGTH, the open
 // sky a fraction of it, and the final pass is the only place display gamma is applied.
+//
+// The model is split in two so a phone pays for what it can see: `skyAmbient` is the cheap,
+// direction-free sky that vertex lighting and the haze read, and `skyRadiance` is the full
+// directional sky that only the pixels actually looking at the sky (and water) evaluate.
 
 #include "/lib/settings.glsl"
 
@@ -25,8 +29,9 @@ uniform int isEyeInWater;
 uniform int worldTime;
 uniform int moonPhase;
 
+// A gamma-space scene (Minecraft's textures and vertex colours) to linear light, and back.
 vec3 toLinear(vec3 c) {
-    return pow(c, vec3(2.2));
+    return pow(max(c, 0.0), vec3(2.2));
 }
 
 vec3 toDisplay(vec3 c) {
@@ -49,24 +54,17 @@ float hash13(vec3 p) {
     return fract((p.x + p.y) * p.z);
 }
 
-// A smooth three-dimensional value noise, for the rare places a little structure helps (the
-// milky way, the aurora, the wet sheen on stone). It is not used per pixel unless a switch asks.
-float valueNoise3(vec3 p) {
-    vec3 i = floor(p);
-    vec3 f = fract(p);
+// A smooth two-dimensional value noise: four hashes, for the milky way's dust and the aurora's
+// folds. The old 3D version cost eight hashes per tap and was only ever read on the sky.
+float valueNoise2(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
-    float n000 = hash13(i + vec3(0.0, 0.0, 0.0));
-    float n100 = hash13(i + vec3(1.0, 0.0, 0.0));
-    float n010 = hash13(i + vec3(0.0, 1.0, 0.0));
-    float n110 = hash13(i + vec3(1.0, 1.0, 0.0));
-    float n001 = hash13(i + vec3(0.0, 0.0, 1.0));
-    float n101 = hash13(i + vec3(1.0, 0.0, 1.0));
-    float n011 = hash13(i + vec3(0.0, 1.0, 1.0));
-    float n111 = hash13(i + vec3(1.0, 1.0, 1.0));
-    return mix(
-        mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
-        mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y),
-        f.z);
+    float a = hash12(i);
+    float b = hash12(i + vec2(1.0, 0.0));
+    float c = hash12(i + vec2(0.0, 1.0));
+    float d = hash12(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
 // World-space directions of the sun and of the light that casts shadows (the moon at night).
@@ -94,28 +92,46 @@ vec3 moonlight(vec3 s) {
     return vec3(0.035, 0.05, 0.09) * smoothstep(0.0, -0.10, s.y) * (1.0 - rainStrength * 0.6);
 }
 
-// The sky's radiance along a world-space direction `d`, the sun at `s`. It is the base sky, not
-// the stars or the aurora: the vertex lighting reads this too, and a star is not fill light.
+// The sky's radiance along a world-space direction `d`, the sun at `s`. This is the full,
+// directional sky: a Rayleigh zenith, a warm horizon, two Mie lobes around the sun and the
+// moon's own cool halo. It is evaluated for sky pixels, water and the sun disk, not for every
+// lit vertex (see `skyAmbient`).
 vec3 skyRadiance(vec3 d, vec3 s) {
     float day = daylight(s);
     float lowSun = 1.0 - smoothstep(0.0, 0.4, abs(s.y));
     float up = clamp(d.y, 0.0, 1.0);
     float horizon = pow(1.0 - up, 5.0);
 
-    vec3 zenith = mix(vec3(0.0015, 0.0035, 0.010), vec3(0.040, 0.115, 0.44), day);
-    vec3 rim = mix(vec3(0.004, 0.006, 0.013), vec3(0.30, 0.46, 0.78) * (1.0 - 0.42 * lowSun), day);
+    vec3 zenith = mix(vec3(0.0016, 0.0038, 0.011), vec3(0.042, 0.118, 0.45), day);
+    vec3 rim = mix(vec3(0.0045, 0.0065, 0.014), vec3(0.31, 0.47, 0.80) * (1.0 - 0.40 * lowSun), day);
     vec3 color = mix(zenith, rim, horizon);
 
-    // The sun warms the horizon around it; a broad halo surrounds it all day, and at night the
-    // moon has its own much cooler one.
+    // The sun warms the horizon around it; a broad Mie haze surrounds it all day, a tight
+    // aureole sits inside it, and at night the moon has its own much cooler halo.
     float toward = max(dot(d, s), 0.0);
-    color += vec3(1.0, 0.38, 0.10) * lowSun * day * pow(toward, 4.0) * horizon * 2.4;
-    color += sunlight(s) * (0.55 / SUN_STRENGTH) * pow(toward, 32.0);
-    color += vec3(0.10, 0.16, 0.32) * (1.0 - day) * pow(max(dot(d, keyLightDir()), 0.0), 24.0) * 0.35;
+    color += vec3(1.00, 0.40, 0.12) * lowSun * day * pow(toward, 4.0) * horizon * 2.2;
+    color += sunlight(s) * (0.50 / SUN_STRENGTH) * (pow(toward, 24.0) + 0.35 * pow(toward, 5.0));
+    color += vec3(0.10, 0.16, 0.32) * (1.0 - day) * pow(max(dot(d, keyLightDir()), 0.0), 20.0) * 0.30;
 
     // Under the horizon, hazy land as far as the horizon's colour, darker looking further down.
     color *= mix(1.0, 0.5, smoothstep(0.1, 0.7, -d.y));
-    color = mix(color, vec3(luma(color) * 0.8), rainStrength * 0.85);
+    color = mix(color, vec3(luma(color) * 0.85), rainStrength * 0.85);
+    color = mix(color, vec3(luma(color)), (1.0 - day) * 0.25);
+    return color * SKY_BRIGHTNESS * SKY_SATURATION;
+}
+
+// The cheap sky: one average of the zenith and the horizon, no direction-dependent lobes. This
+// is what fills the world's shadowed side and colours the haze, so it runs per vertex and per
+// terrain pixel; the full `skyRadiance` above is kept for the pixels that actually see sky.
+vec3 skyAmbient(vec3 s) {
+    float day = daylight(s);
+    float lowSun = 1.0 - smoothstep(0.0, 0.4, abs(s.y));
+    vec3 zenith = mix(vec3(0.0016, 0.0038, 0.011), vec3(0.042, 0.118, 0.45), day);
+    vec3 rim = mix(vec3(0.0045, 0.0065, 0.014), vec3(0.31, 0.47, 0.80), day);
+    vec3 color = zenith * 0.62 + rim * 0.38;
+    // The warm band a low sun puts along the horizon, averaged into the fill.
+    color += vec3(1.00, 0.42, 0.16) * lowSun * day * 0.055;
+    color = mix(color, vec3(luma(color) * 0.88), rainStrength * 0.85);
     color = mix(color, vec3(luma(color)), (1.0 - day) * 0.25);
     return color * SKY_BRIGHTNESS * SKY_SATURATION;
 }
@@ -126,12 +142,14 @@ vec3 nightSky(vec3 d, vec3 s, float t) {
     float night = 1.0 - daylight(s);
     if (night <= 0.001 || d.y < -0.08) return vec3(0.0);
     night *= 1.0 - rainStrength;
+    if (night <= 0.001) return vec3(0.0);
     vec3 color = vec3(0.0);
 
-    // The milky way: a broad band tilted across the sky, broken by noise.
+    // The milky way: a broad band tilted across the sky, broken by cheap 2D dust.
     vec3 bandNormal = normalize(vec3(0.25, 0.32, 0.91));
     float band = pow(1.0 - abs(dot(d, bandNormal)), 9.0);
-    float dust = 0.55 + 0.45 * valueNoise3(d * 7.0 + vec3(13.0, 4.0, 27.0));
+    vec2 q = d.xz / max(d.y + 0.35, 0.15);
+    float dust = 0.55 + 0.45 * valueNoise2(q * 3.2 + vec2(13.0, 4.0));
     color += vec3(0.030, 0.034, 0.060) * band * dust * night * smoothstep(-0.05, 0.25, d.y);
 
     // Two star layers. A cell holds at most one star; the threshold leaves most cells empty.
@@ -150,13 +168,16 @@ vec3 nightSky(vec3 d, vec3 s, float t) {
 
 #ifdef AURORA
     // A curtain of green and violet light: two overlapping sheets, strongest low in the north.
-    float north = smoothstep(0.02, 0.6, d.z) * smoothstep(0.0, 0.18, d.y);
-    vec2 p = d.xz / max(d.y + 0.18, 0.04);
-    float sheet = 0.5 + 0.5 * sin(p.y * 2.2 + t * 0.11 + valueNoise3(vec3(p * 1.7, t * 0.05)) * 5.2);
-    float curtain = pow(sheet, 3.0) * exp(-abs(p.x) * 0.55);
-    float folds = 0.6 + 0.4 * valueNoise3(vec3(p * 4.0, t * 0.08));
-    color += mix(vec3(0.06, 0.55, 0.32), vec3(0.42, 0.12, 0.75), 0.35)
-        * curtain * folds * north * night * AURORA_STRENGTH;
+    // Only the north half of the sky can show one, so the rest skips the noise entirely.
+    if (d.z > 0.02 && d.y > 0.0) {
+        float north = smoothstep(0.02, 0.6, d.z) * smoothstep(0.0, 0.18, d.y);
+        vec2 p = d.xz / max(d.y + 0.18, 0.04);
+        float sheet = 0.5 + 0.5 * sin(p.y * 2.2 + t * 0.11 + valueNoise2(p * 1.7 + vec2(t * 0.05)) * 5.2);
+        float curtain = pow(sheet, 3.0) * exp(-abs(p.x) * 0.55);
+        float folds = 0.6 + 0.4 * valueNoise2(p * 4.0 + vec2(t * 0.08));
+        color += mix(vec3(0.06, 0.55, 0.32), vec3(0.42, 0.12, 0.75), 0.35)
+            * curtain * folds * north * night * AURORA_STRENGTH;
+    }
 #endif
 
     return color;
@@ -176,16 +197,15 @@ vec3 keyLightAt(vec3 n, float wrap) {
     return (sunlight(s) + moonlight(s)) * lit;
 }
 
-// Everything else reaching it with light levels `levels`: the sky around (half its colour, the
-// rest grey), the warm light the sunlit ground sends back, torches, and a floor that keeps caves
-// readable.
+// Everything else reaching it with light levels `levels`: the sky around, the warm light the
+// sunlit ground sends back, torches, and a floor that keeps caves readable. One cheap sky
+// sample, not two full directional ones: the fill is an average by nature.
 vec3 fillLightAt(vec3 n, vec2 levels) {
     vec3 s = sunDir();
-    // The sky's light is about the average of the zenith and a horizon away from the sun, and
-    // nearer white than either.
-    vec3 sky = 0.5 * (skyRadiance(vec3(0.0, 1.0, 0.0), s) + skyRadiance(normalize(vec3(-s.x, 0.1, -s.z)), s));
-    vec3 ambient = mix(vec3(luma(sky)), sky, 0.4) * 1.6 * (0.75 + 0.25 * n.y);
-    vec3 bounce = sunlight(s) * max(s.y, 0.0) * 0.2 * (0.5 - 0.5 * n.y);
+    vec3 sky = skyAmbient(s);
+    vec3 ambient = mix(vec3(luma(sky)), sky, 0.5) * 1.35 * (0.72 + 0.28 * n.y);
+    // The ground bounces a little of the sun back onto down-facing faces, warm and weak.
+    vec3 bounce = sunlight(s) * max(s.y, 0.0) * 0.18 * (0.5 - 0.5 * n.y) * vec3(1.0, 0.92, 0.82);
     float sky2 = levels.y * levels.y;
     float block = levels.x;
     vec3 torch = vec3(1.0, 0.56, 0.26) * (pow(block, 4.0) * 1.8 + block * 0.08) * BLOCKLIGHT_STRENGTH;
@@ -205,33 +225,55 @@ vec2 distortShadow(vec2 p) {
     return p / (length(p) * SHADOW_DISTORTION + (1.0 - SHADOW_DISTORTION));
 }
 
-// A cheap GGX-shaped highlight: `n` and `v` are unit vectors, `power` the surface's gloss. It
-// is not a full BRDF; it is the sun's image on a wet or polished face, which is most of what a
-// player reads as "surface" in a block game.
+// A normalized Blinn-Phong lobe. The old code returned the peak of the lobe itself (about four
+// for a polished surface) and multiplied it by a full sun's irradiance, so a flat top face at
+// noon had its whole surface in the highlight and clipped to white. The caller now also gives a
+// Fresnel weight, so the lobe only becomes strong at the grazing angles where a real surface
+// reflects: a wet or icy face, not every block's roof.
 float specular(vec3 n, vec3 v, vec3 l, float power) {
     vec3 h = normalize(l + v);
     float d = max(dot(n, h), 0.0);
-    return pow(d, power) * (power + 8.0) / 25.1327;
+    float nl = max(dot(n, l), 0.0);
+    return pow(d, power) * nl * (power + 8.0) / 25.1327;
 }
 
-// The ACES film curve (Narkowicz's fit), a soft log shoulder, and a plain Reinhard fallback.
-vec3 tonemapACES(vec3 x) {
-    x = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
-    return x;
+// Schlick's Fresnel: 4% head-on, nearly all of it at a grazing look. This is what keeps the
+// sun's image on a wet street and off a dry roof.
+float fresnel(vec3 n, vec3 v) {
+    return 0.04 + 0.96 * pow(1.0 - clamp(dot(n, v), 0.0, 1.0), 5.0);
 }
 
-vec3 tonemapAgX(vec3 x) {
-    // A compact, hue-preserving approximation of AgX's log shoulder: the scene is compressed
-    // around middle grey before the display curve, which keeps sunsets and lava from clipping
-    // to one flat colour.
-    const float middleGrey = 0.18;
-    vec3 a = log2(max(x / middleGrey, 1e-6) + 1.0);
-    a = a / (a + 1.35);
+// ACES: the RRT + ODT shoulder fitted by Stephen Hill, with the standard sRGB/AP0 conversion on
+// each side. Compared with the old compact fit it keeps the hue of a sunset and the colour of
+// lava while it rolls off, and it never reaches a flat 1.0: the top of the range stays a colour.
+vec3 tonemapACES(vec3 color) {
+    // GLSL's mat3 constructor takes columns, so each matrix is written column by column; every
+    // row sums to one, which keeps a neutral grey neutral.
+    const mat3 inputMatrix = mat3(
+        0.6131, 0.0702, 0.0206,
+        0.3395, 0.9164, 0.1096,
+        0.0474, 0.0134, 0.8698);
+    const mat3 outputMatrix = mat3(
+         1.7050, -0.1302, -0.0240,
+        -0.6217,  1.1408, -0.1289,
+        -0.0833, -0.0106,  1.1529);
+    color = inputMatrix * color;
+    vec3 a = color * (color + 0.0245786) - 0.000090537;
+    vec3 b = color * (0.983729 * color + 0.4329510) + 0.238081;
+    return clamp(outputMatrix * (a / b), 0.0, 1.0);
+}
+
+// A soft filmic shoulder (the Uncharted 2 curve) with a true black. It keeps more of the
+// midtone lift than ACES and is the gentler option for a small, bright phone screen.
+vec3 tonemapFilmic(vec3 x) {
+    vec3 a = max(x - 0.004, 0.0);
+    a = (a * (6.2 * a + 0.5)) / (a * (6.2 * a + 1.7) + 0.06);
     return clamp(a, 0.0, 1.0);
 }
 
 vec3 tonemapReinhard(vec3 x) {
-    return clamp(x / (1.0 + x), 0.0, 1.0);
+    const float white = 4.0;
+    return clamp(x * (1.0 + x / (white * white)) / (1.0 + x), 0.0, 1.0);
 }
 
 vec3 tonemap(vec3 x) {
@@ -239,10 +281,14 @@ vec3 tonemap(vec3 x) {
 #if TONEMAP == 0
     x = tonemapACES(x);
 #elif TONEMAP == 1
-    x = tonemapAgX(x);
+    x = tonemapFilmic(x);
 #else
     x = tonemapReinhard(x);
 #endif
-    // Saturation after the curve, where it reads the way a photograph's does.
-    return clamp(mix(vec3(luma(x)), x, SATURATION), 0.0, 1.0);
+    // Saturation after the curve, where it reads the way a photograph's does, then a film-like
+    // desaturation of the very brightest values so nothing ends as a flat sheet of white.
+    x = mix(vec3(luma(x)), x, SATURATION);
+    float peak = smoothstep(0.78, 1.0, max(x.r, max(x.g, x.b)));
+    x = mix(x, vec3(luma(x)), peak * 0.28);
+    return clamp(x, 0.0, 1.0);
 }

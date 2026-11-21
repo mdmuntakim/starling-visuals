@@ -48,15 +48,14 @@ float hazeDepth(vec3 rel, float y0, vec3 s) {
     return density * min(mean, 2.0) * length(rel);
 }
 
-// The light the haze along `d` sends to the eye: the sky's near the horizon (looking down at a
-// valley, the sunlit air is as bright as the horizon), dark where the eye has no sky above, and
-// brighter toward the sun.
+// The light the haze along `d` sends to the eye: the sky's average, dark where the eye has no sky
+// above, and brighter toward the sun. The average `skyAmbient` is one cheap sample; the haze is
+// low-frequency, so it does not need the full directional sky of a sky pixel.
 vec3 hazeLight(vec3 d, vec3 s) {
-    vec3 level = normalize(vec3(d.x, max(d.y, 0.0) + 0.001, d.z));
     float eyeSky = float(eyeBrightnessSmooth.y) / 240.0;
-    vec3 color = skyRadiance(level, s) * mix(0.05, 1.0, eyeSky * eyeSky);
-    float toward = pow(max(dot(d, s), 0.0), 8.0);
-    color += sunlight(s) * toward * 0.22 * (1.0 - rainStrength);
+    vec3 color = skyAmbient(s) * mix(0.10, 1.05, eyeSky * eyeSky);
+    float toward = max(dot(d, s), 0.0);
+    color += sunlight(s) * (pow(toward, 8.0) * 0.20 + pow(toward, 64.0) * 0.28) * (1.0 - rainStrength);
     return color;
 }
 
@@ -69,13 +68,17 @@ vec3 viewPosition(vec2 uv, float depth) {
 #ifdef SSAO
 // A few depth taps around the pixel, each an occluder when it stands above the surface plane.
 // It is deliberately narrow (a hand's width) and soft: the shadow map already does the large
-// scale, this only seats objects on the ground and darkens the inside of a corner.
+// scale, this only seats objects on the ground and darkens the inside of a corner. Past a few
+// dozen blocks the taps no longer resolve anything, so the far field skips the loop entirely.
 float ambientOcclusion(vec2 uv, float depth) {
     vec3 p = viewPosition(uv, depth);
+    float dist = length(p);
+    float fade = 1.0 - smoothstep(26.0, 56.0, dist);
+    if (fade <= 0.0) return 1.0;
     vec3 n = normalize(cross(dFdx(p), dFdy(p)));
     float jitter = hash12(gl_FragCoord.xy) * 6.2831853;
     float spread = 6.0 / min(viewWidth, viewHeight);
-    float worldRadius = 0.75 + 0.035 * length(p);
+    float worldRadius = 0.75 + 0.035 * dist;
     float occ = 0.0;
     for (int i = 0; i < SSAO_SAMPLES; i++) {
         float a = float(i) * 2.3999632 + jitter;
@@ -85,11 +88,12 @@ float ambientOcclusion(vec2 uv, float depth) {
         if (d >= 1.0) continue;
         vec3 q = viewPosition(at, d);
         vec3 delta = q - p;
-        float dist = length(delta);
-        float facing = max(0.0, dot(n, delta / max(dist, 1e-4)));
-        occ += facing * (1.0 - smoothstep(0.0, worldRadius, dist));
+        float ddist = length(delta);
+        float facing = max(0.0, dot(n, delta / max(ddist, 1e-4)));
+        occ += facing * (1.0 - smoothstep(0.0, worldRadius, ddist));
     }
-    return clamp(1.0 - SSAO_STRENGTH * occ / float(SSAO_SAMPLES), 0.35, 1.0);
+    float strength = SSAO_STRENGTH * fade;
+    return clamp(1.0 - strength * occ / float(SSAO_SAMPLES), 0.45, 1.0);
 }
 #endif
 

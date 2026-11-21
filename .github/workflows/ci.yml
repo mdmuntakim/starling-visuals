@@ -9,6 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check every include resolves
+        run: python3 tools/check_includes.py
       - name: Build the archive
         run: bash build.sh
       - name: Check the archive
